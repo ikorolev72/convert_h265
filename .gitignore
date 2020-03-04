@@ -1,0 +1,17 @@
+*.zip
+*.7z
+*.rar
+*.tar
+*.tgz
+*.mp3
+#*.mp4
+*.tar.gz
+*.db
+*.log
+tmp/*
+log/*
+html/media/*
+data/log/*
+data/var/*
+processing/bin/*.sh
+
