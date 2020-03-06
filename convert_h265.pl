@@ -9,7 +9,7 @@ use File::Find;
 use Data::Dumper;
 use JSON;
 
-my $version = "1.0 20200304";
+my $version = "0.9 20200307";
 my $video_extensions =
 "avi|mkv|mov|mp4|webm|flv|m2ts|mts|qt|wmv|asf|amv|m4p|m4v|mpg|mp2|mpeg|mpe|mpv|m2v|m4v|svi|3gp|3gp2|mxf|nsv";
 my $basedir = dirname($0);
@@ -19,10 +19,11 @@ mkdir("log");
 mkdir("tmp");
 mkdir("data");
 
-my $logFile = "$curdir/log/$0.log";
-my $videoFilesDataFile="$curdir/data/video_files_info.json";
-my @videoFiles=();
-my $videoFilesData={};
+my $logFile     = "$curdir/log/$0.log";
+my $encodedFile = "$curdir/data/encoded.txt";
+my $failedFile  = "$curdir/data/failed.txt";
+
+my @videoFiles = ();
 
 my $defIn      = "";
 my $defFfmpeg  = "ffmpeg";
@@ -38,17 +39,15 @@ GetOptions(
     'backup'    => \$backup,
     'ffmpeg=s'  => \$ffmpeg,
     'ffprobe=s' => \$ffprobe,
-    'cpu=n'  => \$cpu,
+    'cpu=n'     => \$cpu,
     "help|h|?"  => \$help
 );
 
 $in      = ($in)      ? $in       : $defIn;
-$cpu      = ($cpu)     ? int($cpu) : $defCpu;
+$cpu     = ($cpu)     ? int($cpu) : $defCpu;
 $backup  = ($backup)  ? 1         : 0;
 $ffmpeg  = ($ffmpeg)  ? $ffmpeg   : $defFfmpeg;
 $ffprobe = ($ffprobe) ? $ffprobe  : $defFfprobe;
-
-
 
 if ($help) {
     show_help();
@@ -80,32 +79,59 @@ if ( !-d $in ) {
 w2log("INFO: Will use ffmpeg binary: '$ffmpeg'");
 w2log("INFO: Will use ffprobe binary: '$ffmpeg'");
 
-if( -e $videoFilesDataFile) {
-    w2log("INFO: Read info from datafile: '$videoFilesDataFile'");
-    $videoFilesData=decode_json( ReadFile( $videoFilesDataFile) );
-}
+# read encoded and failed files and ignore those files in processing
+my $encoded = {};
+my $failed  = {};
+%{$encoded} = ReadFileInHash($encodedFile);
+%{$failed}  = ReadFileInHash($failedFile);
 
-
+# looking for all video files
 find( \&wanted, $in );
 
-foreach my $file (@videoFiles) {
-    if( $videoFilesData->{$file}->{'encoded'} ) {        
-        next;
-    } else {
-        $videoFilesData->{$file}->{'started'} =get_date();
-        my $videoInfo=getVideoInfo( $file);
-        #if( $videoInfo->{'streams'}[0]->{'codec_name'}==='hevc' ) {
-        #    w2log("INFO: Read info from datafile: '$videoFilesDataFile'");
-        #}
-        if( runEncoding( $file ) ) {
 
-        }
-        $videoFilesData->{$file}->{'finished'} =get_date();
+foreach my $file (@videoFiles) {
+    if ( $encoded->{$file} ) {
+        next;
     }
+    if ( $failed->{$file} ) {
+        next;
+    }
+
+    w2log("INFO: Check info for video file '$file'");
+    my $videoInfo   = getVideoInfo($file);
+    my $audioInfo   = getAudioInfo($file);
+    my $tmpFileName = time() . rand(10000);
+    my $encodingLog = "$curdir/log/$tmpFileName.log";
+    my $outFile     = "$curdir/tmp/$tmpFileName.mp4";
+
+    if ( $videoInfo->{'streams'}[0]->{'codec_name'} =~ /^hevc$/ ) {
+        $encoded->{$file} = 1;
+        w2log("INFO: File '$file' already encoded in H.265");
+        next;
+    }
+
+    w2log("INFO: Start encoding video file '$file'");
+    if ( runEncoding( $file, $outFile, $encodingLog, $videoInfo, $audioInfo ) )
+    {
+        w2log("Info: file '$file' encoded to H.265");
+        $encoded->{$file} = 1;
+        WriteHash( $encodedFile, $encoded );
+    }
+    else {
+        w2log(
+"Warning: file '$file' encoding  to H.265 failed. Please check log '$encodingLog'"
+        );
+        $failed->{$file} = 1;
+        unlink($outFile);
+        WriteHash( $failedFile, $failed );
+    }
+
 }
 
+w2log("INFO: All done. Script finished");
+exit(0);
 
-print Dumper(@videoFiles);
+
 
 sub show_help {
     my $msg = shift;
@@ -124,16 +150,17 @@ Where:
 Sample:	${0} --in=/mediaserver/media/tv --cpu 1 --ffmpeg=/opt/ffmpeg/bin/ffmpeg --ffprobe=/opt/ffmpeg/bin/ffprobe 
 "
     );
+
     #print "Press ENTER to exit:";
     #<STDIN>;
     exit(1);
 }
 
- sub wanted {
-    if( /\.($video_extensions)$/i )  {
-        push( @videoFiles, $File::Find::name) ;
-    } 
- }
+sub wanted {
+    if (/\.($video_extensions)$/i) {
+        push( @videoFiles, $File::Find::name );
+    }
+}
 
 sub w2log {
     my $msg = shift;
@@ -154,47 +181,128 @@ sub get_date {
 }
 
 sub ReadFile {
-	my $filename=shift;
-	my $ret="";
-	open (IN,"<",$filename) || w2log("Can't open file $filename") ;
-		while (<IN>) { $ret.=$_; }
-	close (IN);
-	return $ret;
-}	
+    my $filename = shift;
+    my $ret      = "";
+    open( IN, "<", $filename ) || w2log("Can't open file $filename");
+    while (<IN>) { $ret .= $_; }
+    close(IN);
+    return $ret;
+}
 
 sub WriteFile {
-	my $filename=shift;
-	my $body=shift;
-	unless( open (OUT,">", $filename)) { w2log("Can't open file $filename for write" ) ;return 0; }
-	print OUT $body;
-	close (OUT);
-	return 1;
-}	
+    my $filename = shift;
+    my $body     = shift;
+    unless ( open( OUT, ">", $filename ) ) {
+        w2log("Can't open file $filename for write");
+        return 0;
+    }
+    print OUT $body;
+    close(OUT);
+    return 1;
+}
 
 sub AppendFile {
-	my $filename=shift;
-	my $body=shift;
-	unless( open (OUT,">>", $filename)) { w2log("Can't open file $filename for append" ) ;return 0; }
-	print OUT $body;
-	close (OUT);
-	return 1;
+    my $filename = shift;
+    my $body     = shift;
+    unless ( open( OUT, ">>", $filename ) ) {
+        w2log("Can't open file $filename for append");
+        return 0;
+    }
+    print OUT $body;
+    close(OUT);
+    return 1;
 }
 
-
-sub getVideoInfo
-{
-    my $input=shift;
-    my $cmd = "$ffprobe -v quiet -hide_banner -show_streams -select_streams v:0 -of json $input";
+sub getVideoInfo {
+    my $input = shift;
+    my $cmd =
+"$ffprobe -v quiet -hide_banner -show_streams -select_streams v:0 -of json $input";
     my $json = `$cmd`;
-    my $out = decode_json($json);
+    my $out  = decode_json($json);
     return ($out);
 }
 
-sub getAudioInfo
-{
-    my $input=shift;
-    my $cmd = "$ffprobe -v quiet -hide_banner -show_streams -select_streams a:0 -of json $input";
+sub getVideoCodec {
+    my $input = shift;
+    my $cmd =
+"$ffprobe ffprobe -v error -show_entries stream=codec_name -select_streams v -of csv=p=0  \"$input\"";
+    my $out = `$cmd`;
+    return ( chomp($out) );
+}
+
+sub getAudioInfo {
+    my $input = shift;
+    my $cmd =
+"$ffprobe -v quiet -hide_banner -show_streams -select_streams a -of json $input";
     my $json = `$cmd`;
-    my $out = decode_json($json);
+    my $out  = decode_json($json);
     return ($out);
+}
+
+sub ReadFileInArray {
+    my $path_to_file = shift;
+    my @lines;
+    if ( -e $path_to_file ) {
+        open my $handle, '<',
+          $path_to_file || w2log("Can't open file $path_to_file ");
+        chomp( @lines = <$handle> );
+        close $handle;
+    }
+    return (@lines);
+}
+
+sub ReadFileInHash {
+    my $path_to_file = shift;
+    my %hash;
+    my @lines = ReadFileInArray($path_to_file);
+    foreach (@lines) {
+        $hash{$_} = 1;
+
+    }
+    return (%hash);
+}
+
+sub WriteHash {
+    my $path_to_file = shift;
+    my $hash         = shift;
+    my $body         = "";
+    foreach ( keys(%{$hash}) ) {
+        $body .= "$_\n";
+    }
+    return ( WriteFile( $path_to_file, $body ) );
+}
+
+sub runEncoding {
+    my ( $file, $outFile, $encodingLog, $videoInfo, $audioInfo ) = @_;
+
+    #foreach( $videoInfo )
+    my $audioCodec = " -c:a mp3 ";
+    if ( $audioInfo->{'streams'}[0]->{'channels'} ) {
+        $audioCodec .= " -ac " . $audioInfo->{'streams'}[0]->{'channels'};
+    }
+    else {
+        $audioCodec .= " -ac 2 ";
+    }
+    if ( $audioInfo->{'streams'}[0]->{'bit_rate'} ) {
+        $audioCodec .= " -b:a " . $audioInfo->{'streams'}[0]->{'bit_rate'};
+    }
+    else {
+        $audioCodec .= " -b:a 128k ";
+    }
+
+    #if (   $audioInfo->{'streams'}[0]->{'codec_name'} == 'aac'
+    #    || $audioInfo->{'streams'}[0]->{'codec_name'} == 'mp3' )
+    #{
+    #    $audioCodec = " -c:a copy ";
+    #}
+    my $cmd =
+"$ffmpeg -y -loglevel warning -i \"$file\" -map 0:v -c:v libx265 -crf 25  -preset medium -map 0:a? $audioCodec -f mp4 $outFile -threads $cpu >  $encodingLog 2>&1  ";
+    w2log("Info: Start encoding command $cmd");
+
+    #print("$cmd\n" );
+    #return 1;
+    if ( system($cmd ) ) {
+        return (0);
+    }
+    return 1;
 }
