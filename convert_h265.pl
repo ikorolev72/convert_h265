@@ -6,6 +6,7 @@ use Cwd;
 use File::Basename;
 use File::Find;
 use Data::Dumper;
+use lib "." ;
 use JSON;
 
 my $version = "1.0 20200308";
@@ -97,7 +98,7 @@ foreach my $file (@videoFiles) {
     my $tmpFileName = time() . rand(10000);
     my $encodingLog = "$curdir/log/$tmpFileName.log";
     my ($ext) = $file =~ /(\.[^.]+)$/;
-    my $outFile     = "$curdir/tmp/$tmpFileName.$ext";
+    my $outFile     = "$curdir/tmp/${tmpFileName}$ext";
 
     if ( $videoInfo->{'streams'}[0]->{'codec_name'} =~ /^hevc$/ ) {
         w2log("INFO: File '$file' already encoded in H.265");
@@ -297,7 +298,7 @@ sub runEncoding {
     }
 
     my $cmd =
-"$ffmpeg -y -loglevel warning -i \"$file\"  $videoCodec $audioCodec  $outFile -threads $cpu >  $encodingLog 2>&1  ";
+"$ffmpeg -y -loglevel warning -i \"$file\"  $videoCodec $audioCodec  -threads $cpu $outFile  >  $encodingLog 2>&1  ";
     w2log("Info: Start encoding command $cmd");
 
     if ( system($cmd ) ) {
