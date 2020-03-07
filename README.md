@@ -21,6 +21,8 @@ cd
 
 
 ##	Usage:
+Before you start, I can recommended  make full backup of your video files or start utility with `--backup` option!!!
+
 ##
 ```bash
 This script converting video files to H.265 codec 
