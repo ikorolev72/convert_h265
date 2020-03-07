@@ -29,7 +29,7 @@ This script converting video files to H.265 codec
 Usage: convert_h265.pl --in=/path/input [--backup] [--cpu 1] [--ffmpeg=/path/to/ffmpeg][--ffprobe=/path/to/ffprobe]  [--help]
 Where:
  --in=/path/input - search videos from this folder 
- --cpu 1 - define how many CPUs use for transcoding. Possible values: 0 - mean use all CPUs, from 1 to all CPU cores ( can be checked with 'nproc' linux command ), default: 1.
+ --cpu 1 - define how many CPUs use for transcoding. Possible values: from 1 to all CPU cores ( can be checked with 'nproc' linux command ), default: 1.
  --backup - do not remove original video file. File will be ranamed to 'original_video_filename' with digits extension like 'original_video_filename.1234455.22222'
  --ffmpeg=/path/to/ffmpeg - path to ffmpeg binariy ( by default using 'ffmpeg', must be found in environment PATH )
  --ffprobe=/path/to/ffprobe - path to ffprobe binariy ( by default using 'ffprobe', must be found in environment PATH )
