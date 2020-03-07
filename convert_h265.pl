@@ -1,7 +1,6 @@
 #!/usr/bin/perl
 # korolev-ia [at] yandex.ru
 
-use File::Which;
 use Getopt::Long;
 use Cwd;
 use File::Basename;
@@ -9,9 +8,10 @@ use File::Find;
 use Data::Dumper;
 use JSON;
 
-my $version = "0.9 20200307";
+my $version = "1.0 20200308";
 my $video_extensions =
-"avi|mkv|mov|mp4|webm|flv|m2ts|mts|qt|wmv|asf|amv|m4p|m4v|mpg|mp2|mpeg|mpe|mpv|m2v|m4v|svi|3gp|3gp2|mxf|nsv";
+"avi|mkv|mov|mp4|flv|m2ts|mts|wmv|asf|amv|m4p|mpg|mp2|mpeg|mpe|mpv|m2v|m4v|svi|3gp";
+
 my $basedir = dirname($0);
 chdir($basedir);
 my $curdir = getcwd();
@@ -19,9 +19,9 @@ mkdir("log");
 mkdir("tmp");
 mkdir("data");
 
-my $logFile     = "$curdir/log/$0.log";
-my $encodedFile = "$curdir/data/encoded.txt";
-my $failedFile  = "$curdir/data/failed.txt";
+my $logFile     = "log/convert_h265.log";
+my $encodedFile = "data/encoded.txt";
+my $failedFile  = "data/failed.txt";
 
 my @videoFiles = ();
 
@@ -53,18 +53,13 @@ if ($help) {
     show_help();
 }
 
-unless ($ffmpeg) {
-    $ffmpeg = which 'ffmpeg';
-}
-unless ($ffprobe) {
-    $ffmpeg = which 'ffprobe';
-}
-if ( !-f "$ffmpeg" ) {
+
+if ( system( "$ffmpeg -version -hide_banner") ) {
     show_help(
         'Please, set the path to ffmpeg in enviroment or use option --ffmpeg ');
     exit(1);
 }
-if ( !-f "$ffprobe" ) {
+if ( system ("$ffprobe -version -hide_banner") ) {
     show_help(
         'Please, set the path to ffprobe in enviroment or use option --ffprobe '
     );
@@ -88,7 +83,6 @@ my $failed  = {};
 # looking for all video files
 find( \&wanted, $in );
 
-
 foreach my $file (@videoFiles) {
     if ( $encoded->{$file} ) {
         next;
@@ -102,11 +96,12 @@ foreach my $file (@videoFiles) {
     my $audioInfo   = getAudioInfo($file);
     my $tmpFileName = time() . rand(10000);
     my $encodingLog = "$curdir/log/$tmpFileName.log";
-    my $outFile     = "$curdir/tmp/$tmpFileName.mp4";
+    my ($ext) = $file =~ /(\.[^.]+)$/;
+    my $outFile     = "$curdir/tmp/$tmpFileName.$ext";
 
     if ( $videoInfo->{'streams'}[0]->{'codec_name'} =~ /^hevc$/ ) {
-        $encoded->{$file} = 1;
         w2log("INFO: File '$file' already encoded in H.265");
+        AppendFile( $encodedFile, "$file\n" );
         next;
     }
 
@@ -114,24 +109,33 @@ foreach my $file (@videoFiles) {
     if ( runEncoding( $file, $outFile, $encodingLog, $videoInfo, $audioInfo ) )
     {
         w2log("Info: file '$file' encoded to H.265");
-        $encoded->{$file} = 1;
-        WriteHash( $encodedFile, $encoded );
+        AppendFile( $encodedFile, "$file\n" );
+        if ($backup) {
+            if ( !rename( $file, "$file.$tmpFileName" ) ) {
+                w2log("Warning: Cannot make backup copy of original file '$file' to '$file.$tmpFileName'");
+            }
+            else {
+                w2log("Info: Backup copy of original file '$file' is '$file.$tmpFileName'");
+            }
+
+        }
+        if ( !rename( $outFile, $file ) ) {
+            w2log("ERROR: Cannot rename trancoded file '$outFile' to '$file'");
+        }
+        #unlink( $encodingLog); # remove log for successfuly encoded files
     }
     else {
         w2log(
 "Warning: file '$file' encoding  to H.265 failed. Please check log '$encodingLog'"
         );
-        $failed->{$file} = 1;
         unlink($outFile);
-        WriteHash( $failedFile, $failed );
+        AppendFile( $failedFile, "$file\n" );
     }
 
 }
 
 w2log("INFO: All done. Script finished");
 exit(0);
-
-
 
 sub show_help {
     my $msg = shift;
@@ -164,10 +168,10 @@ sub wanted {
 
 sub w2log {
     my $msg = shift;
-    open( LOG, '>>', $logFile ) || print("Can't open file $logFile. $msg");
-    print LOG get_date() . "\t$msg\n";
+    open( my $LOG, '>>', $logFile ) || print("Can't open file $logFile. $msg");
+    print $LOG get_date() . "\t$msg\n";
     print STDERR get_date() . "\t$msg\n";
-    close(LOG);
+    close($LOG);
 }
 
 sub get_date {
@@ -266,7 +270,7 @@ sub WriteHash {
     my $path_to_file = shift;
     my $hash         = shift;
     my $body         = "";
-    foreach ( keys(%{$hash}) ) {
+    foreach ( keys( %{$hash} ) ) {
         $body .= "$_\n";
     }
     return ( WriteFile( $path_to_file, $body ) );
@@ -275,32 +279,27 @@ sub WriteHash {
 sub runEncoding {
     my ( $file, $outFile, $encodingLog, $videoInfo, $audioInfo ) = @_;
 
-    #foreach( $videoInfo )
-    my $audioCodec = " -c:a mp3 ";
-    if ( $audioInfo->{'streams'}[0]->{'channels'} ) {
-        $audioCodec .= " -ac " . $audioInfo->{'streams'}[0]->{'channels'};
-    }
-    else {
-        $audioCodec .= " -ac 2 ";
-    }
-    if ( $audioInfo->{'streams'}[0]->{'bit_rate'} ) {
-        $audioCodec .= " -b:a " . $audioInfo->{'streams'}[0]->{'bit_rate'};
-    }
-    else {
-        $audioCodec .= " -b:a 128k ";
+    my $audioCodec = "";
+    my $videoCodec = "";
+
+    my $i=0;
+    foreach  ( @{ $audioInfo->{'streams'} } ) {
+        $audioCodec .= " -map 0:a:$i -c:a copy ";
+        $i++;
+
     }
 
-    #if (   $audioInfo->{'streams'}[0]->{'codec_name'} == 'aac'
-    #    || $audioInfo->{'streams'}[0]->{'codec_name'} == 'mp3' )
-    #{
-    #    $audioCodec = " -c:a copy ";
-    #}
+     $i=0;
+    foreach my $videoStream ( @{ $videoInfo->{'streams'} } ) {
+        $videoCodec .=
+          " -map 0:v:$i -c:v libx265 -crf 25 -preset medium ";
+        $i++;
+    }
+
     my $cmd =
-"$ffmpeg -y -loglevel warning -i \"$file\" -map 0:v -c:v libx265 -crf 25  -preset medium -map 0:a? $audioCodec -f mp4 $outFile -threads $cpu >  $encodingLog 2>&1  ";
+"$ffmpeg -y -loglevel warning -i \"$file\"  $videoCodec $audioCodec  $outFile -threads $cpu >  $encodingLog 2>&1  ";
     w2log("Info: Start encoding command $cmd");
 
-    #print("$cmd\n" );
-    #return 1;
     if ( system($cmd ) ) {
         return (0);
     }
