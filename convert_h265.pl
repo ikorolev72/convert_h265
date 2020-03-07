@@ -298,7 +298,7 @@ sub runEncoding {
     }
 
     my $cmd =
-"$ffmpeg -y -loglevel warning -i \"$file\"  $videoCodec $audioCodec  -threads $cpu $outFile  >  $encodingLog 2>&1  ";
+"$ffmpeg -y -loglevel warning -i \"$file\"  $videoCodec $audioCodec  -x265-params pools=$cpu $outFile  >  $encodingLog 2>&1  ";
     w2log("Info: Start encoding command $cmd");
 
     if ( system($cmd ) ) {
