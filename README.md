@@ -16,7 +16,7 @@ I recommeded use last version ffmpeg ( at this momemnt 4.2.2). Debian version av
 
 ```
 git clone https://github.com/ikorolev72/convert_h265.git
-cd 
+cd convert_h265
 ```
 
 
