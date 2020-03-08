@@ -6,10 +6,10 @@ use Cwd;
 use File::Basename;
 use File::Find;
 use Data::Dumper;
-use lib "." ;
+use lib ".";
 use JSON;
 
-my $version = "1.0 20200308";
+my $version = "1.1 20200308";
 my $video_extensions =
 "avi|mkv|mov|mp4|flv|m2ts|mts|wmv|asf|amv|m4p|mpg|mp2|mpeg|mpe|mpv|m2v|m4v|svi|3gp";
 
@@ -54,13 +54,12 @@ if ($help) {
     show_help();
 }
 
-
-if ( system( "$ffmpeg -version -hide_banner") ) {
+if ( system("$ffmpeg -version -hide_banner") ) {
     show_help(
         'Please, set the path to ffmpeg in enviroment or use option --ffmpeg ');
     exit(1);
 }
-if ( system ("$ffprobe -version -hide_banner") ) {
+if ( system("$ffprobe -version -hide_banner") ) {
     show_help(
         'Please, set the path to ffprobe in enviroment or use option --ffprobe '
     );
@@ -73,7 +72,7 @@ if ( !-d $in ) {
     exit(1);
 }
 w2log("INFO: Will use ffmpeg binary: '$ffmpeg'");
-w2log("INFO: Will use ffprobe binary: '$ffmpeg'");
+w2log("INFO: Will use ffprobe binary: '$ffprobe'");
 
 # read encoded and failed files and ignore those files in processing
 my $encoded = {};
@@ -85,52 +84,72 @@ my $failed  = {};
 find( \&wanted, $in );
 
 foreach my $file (@videoFiles) {
-    if ( $encoded->{$file} ) {
-        next;
-    }
-    if ( $failed->{$file} ) {
-        next;
-    }
 
-    w2log("INFO: Check info for video file '$file'");
-    my $videoInfo   = getVideoInfo($file);
-    my $audioInfo   = getAudioInfo($file);
-    my $tmpFileName = time() . rand(10000);
-    my $encodingLog = "$curdir/log/$tmpFileName.log";
-    my ($ext) = $file =~ /(\.[^.]+)$/;
-    my $outFile     = "$curdir/tmp/${tmpFileName}$ext";
-
-    if ( $videoInfo->{'streams'}[0]->{'codec_name'} =~ /^hevc$/ ) {
-        w2log("INFO: File '$file' already encoded in H.265");
-        AppendFile( $encodedFile, "$file\n" );
-        next;
-    }
-
-    w2log("INFO: Start encoding video file '$file'");
-    if ( runEncoding( $file, $outFile, $encodingLog, $videoInfo, $audioInfo ) )
-    {
-        w2log("Info: file '$file' encoded to H.265");
-        AppendFile( $encodedFile, "$file\n" );
-        if ($backup) {
-            if ( !rename( $file, "$file.$tmpFileName" ) ) {
-                w2log("Warning: Cannot make backup copy of original file '$file' to '$file.$tmpFileName'");
-            }
-            else {
-                w2log("Info: Backup copy of original file '$file' is '$file.$tmpFileName'");
-            }
-
+    eval {
+        if ( $encoded->{$file} ) {
+            next;
         }
-        if ( !rename( $outFile, $file ) ) {
-            w2log("ERROR: Cannot rename trancoded file '$outFile' to '$file'");
+        if ( $failed->{$file} ) {
+            next;
         }
-        #unlink( $encodingLog); # remove log for successfuly encoded files
-    }
-    else {
-        w2log(
+
+        w2log("INFO: Check info for video file '$file'");
+        my $videoInfo     = getVideoInfo($file);
+        my $audioInfo     = getAudioInfo($file);
+        my $subtitlesInfo = getSubtitlesInfo($file);
+
+        my $tmpFileName = time() . rand(10000);
+        my $encodingLog = "$curdir/log/$tmpFileName.log";
+        my ($ext)       = $file =~ /(\.[^.]+)$/;
+        my $outFile     = "$curdir/tmp/${tmpFileName}$ext";
+
+        if ( $videoInfo->{'streams'}[0]->{'codec_name'} =~ /^hevc$/ ) {
+            w2log("INFO: File '$file' already encoded in H.265");
+            AppendFile( $encodedFile, "$file\n" );
+            next;
+        }
+
+        w2log("INFO: Start encoding video file '$file'");
+        if (
+            runEncoding(
+                $file,      $outFile,   $encodingLog,
+                $videoInfo, $audioInfo, $subtitlesInfo
+            )
+          )
+        {
+            w2log("Info: file '$file' encoded to H.265");
+            AppendFile( $encodedFile, "$file\n" );
+            if ($backup) {
+                if ( !rename( $file, "$file.$tmpFileName" ) ) {
+                    w2log(
+"Warning: Cannot make backup copy of original file '$file' to '$file.$tmpFileName'"
+                    );
+                }
+                else {
+                    w2log(
+"Info: Backup copy of original file '$file' is '$file.$tmpFileName'"
+                    );
+                }
+
+            }
+            if ( !rename( $outFile, $file ) ) {
+                w2log(
+                    "ERROR: Cannot rename trancoded file '$outFile' to '$file'"
+                );
+            }
+
+            #unlink( $encodingLog); # remove log for successfuly encoded files
+        }
+        else {
+            w2log(
 "Warning: file '$file' encoding  to H.265 failed. Please check log '$encodingLog'"
-        );
-        unlink($outFile);
-        AppendFile( $failedFile, "$file\n" );
+            );
+            unlink($outFile);
+            AppendFile( $failedFile, "$file\n" );
+        }
+    };
+    if ($@) {
+        w2log( "Error: Something went wrong:" . $@ );
     }
 
 }
@@ -221,24 +240,25 @@ sub AppendFile {
 sub getVideoInfo {
     my $input = shift;
     my $cmd =
-"$ffprobe -v quiet -hide_banner -show_streams -select_streams v:0 -of json $input";
+"$ffprobe -v quiet -hide_banner -show_streams -select_streams v:0 -of json \"$input\" 2>/dev/null";
     my $json = `$cmd`;
     my $out  = decode_json($json);
     return ($out);
 }
 
-sub getVideoCodec {
-    my $input = shift;
-    my $cmd =
-"$ffprobe ffprobe -v error -show_entries stream=codec_name -select_streams v -of csv=p=0  \"$input\"";
-    my $out = `$cmd`;
-    return ( chomp($out) );
-}
-
 sub getAudioInfo {
     my $input = shift;
     my $cmd =
-"$ffprobe -v quiet -hide_banner -show_streams -select_streams a -of json $input";
+"$ffprobe -v quiet -hide_banner -show_streams -select_streams a -of json \"$input\" 2>/dev/null";
+    my $json = `$cmd`;
+    my $out  = decode_json($json);
+    return ($out);
+}
+
+sub getSubtitlesInfo {
+    my $input = shift;
+    my $cmd =
+"$ffprobe -v quiet -hide_banner -show_streams -select_streams s -of json \"$input\" 2>/dev/null";
     my $json = `$cmd`;
     my $out  = decode_json($json);
     return ($out);
@@ -267,38 +287,47 @@ sub ReadFileInHash {
     return (%hash);
 }
 
-sub WriteHash {
-    my $path_to_file = shift;
-    my $hash         = shift;
-    my $body         = "";
-    foreach ( keys( %{$hash} ) ) {
-        $body .= "$_\n";
-    }
-    return ( WriteFile( $path_to_file, $body ) );
-}
-
 sub runEncoding {
-    my ( $file, $outFile, $encodingLog, $videoInfo, $audioInfo ) = @_;
+    my ( $file, $outFile, $encodingLog, $videoInfo, $audioInfo, $subtitlesInfo )
+      = @_;
 
-    my $audioCodec = "";
-    my $videoCodec = "";
+    my $audioCodec     = "";
+    my $videoCodec     = "";
+    my $subtitlesCodec = "";
 
-    my $i=0;
-    foreach  ( @{ $audioInfo->{'streams'} } ) {
-        $audioCodec .= " -map 0:a:$i -c:a copy ";
+    my $i = 0;
+    foreach ( @{ $audioInfo->{'streams'} } ) {
+
+        #print Dumper( $_);
+        if ( defined $_->{'index'} ) {
+            $audioCodec .= " -map 0:a:$i -c:a copy ";
+        }
         $i++;
 
     }
 
-     $i=0;
-    foreach my $videoStream ( @{ $videoInfo->{'streams'} } ) {
-        $videoCodec .=
-          " -map 0:v:$i -c:v libx265 -crf 25 -preset medium ";
+    $i = 0;
+    foreach ( @{ $videoInfo->{'streams'} } ) {
+
+        #print Dumper( $_);
+        if ( defined $_->{'index'} ) {
+            $videoCodec .= " -map 0:v:$i -c:v libx265 -crf 25 -preset medium ";
+        }
+        $i++;
+    }
+
+    $i = 0;
+    foreach ( @{ $subtitlesInfo->{'streams'} } ) {
+
+        #print Dumper( $_);
+        if ( defined $_->{'index'} ) {
+            $subtitlesCodec .= " -map 0:s:$i -c:s copy ";
+        }
         $i++;
     }
 
     my $cmd =
-"$ffmpeg -y -loglevel warning -i \"$file\"  $videoCodec $audioCodec  -x265-params pools=$cpu $outFile  >  $encodingLog 2>&1  ";
+"$ffmpeg -y -loglevel warning -i \"$file\"  $videoCodec $audioCodec $subtitlesCodec -x265-params pools=$cpu $outFile  >  $encodingLog 2>&1  ";
     w2log("Info: Start encoding command $cmd");
 
     if ( system($cmd ) ) {
