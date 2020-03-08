@@ -240,7 +240,7 @@ sub AppendFile {
 sub getVideoInfo {
     my $input = shift;
     my $cmd =
-"$ffprobe -v quiet -hide_banner -show_streams -select_streams v:0 -of json \"$input\" 2>/dev/null";
+"$ffprobe -v quiet -hide_banner -show_streams -select_streams v -of json \"$input\" 2>/dev/null";
     my $json = `$cmd`;
     my $out  = decode_json($json);
     return ($out);
